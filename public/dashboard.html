@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dashboard • Comissões</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-theme="light">
+<header class="sticky top-0 z-50" style="border-bottom:1px solid var(--border); background:rgba(255,255,255,.06); backdrop-filter:blur(12px);">
+  <div class="max-w-7xl mx-auto p-4 flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div class="text-2xl font-black">Dashboard de Comissões</div>
+      <div id="meLine" class="text-sm muted">—</div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="chip">Limite crédito: R$ 1.500.000</span>
+      <button id="btnTheme" class="btn">🌙</button>
+      <button id="btnLogout" class="btn">Sair</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto p-4 space-y-4">
+
+  <!-- CARDS -->
+  <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="panel p-4">
+      <div class="text-xs font-black muted">Comissão Total</div>
+      <div id="kpiTotal" class="text-2xl font-black mt-1">—</div>
+      <div id="kpiVendas" class="text-xs muted mt-1">—</div>
+    </div>
+
+    <div class="panel p-4" style="border-color: rgba(16,185,129,.35);">
+      <div class="text-xs font-black muted">Pagas</div>
+      <div id="kpiPago" class="text-2xl font-black mt-1" style="color:var(--good);">—</div>
+      <div id="kpiPagoPct" class="text-xs muted mt-1">—</div>
+    </div>
+
+    <div class="panel p-4" style="border-color: rgba(245,158,11,.35);">
+      <div class="text-xs font-black muted">Pendentes</div>
+      <div id="kpiPendente" class="text-2xl font-black mt-1" style="color:var(--warn);">—</div>
+      <div id="kpiPendenteInfo" class="text-xs muted mt-1">—</div>
+    </div>
+
+    <div class="panel p-4" style="border-color: rgba(239,68,68,.35);">
+      <div class="text-xs font-black muted">Atrasadas</div>
+      <div id="kpiAtrasado" class="text-2xl font-black mt-1" style="color:var(--bad);">—</div>
+      <div id="kpiAtrasadoInfo" class="text-xs muted mt-1">—</div>
+    </div>
+  </section>
+
+  <!-- RESUMO + RANKING -->
+  <section class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <div class="lg:col-span-5 glass p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-lg font-black">Resumo rápido</div>
+          <div class="text-sm muted">Uma visão direta do que importa</div>
+        </div>
+        <button id="btnRefresh" class="btn">🔄 Atualizar</button>
+      </div>
+
+      <div class="mt-4 space-y-3">
+        <div class="panel p-4">
+          <div class="text-xs font-black muted">Top consultor (por valor pago)</div>
+          <div id="quickTop" class="text-xl font-black mt-1">—</div>
+          <div id="quickTopSub" class="text-xs muted mt-1">—</div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="panel p-4">
+            <div class="text-xs font-black muted">Ticket médio (comissão)</div>
+            <div id="quickTicket" class="text-xl font-black mt-1">—</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-black muted">Parcelas (total)</div>
+            <div id="quickParcelas" class="text-xl font-black mt-1">—</div>
+          </div>
+        </div>
+
+        <div class="panel p-4">
+          <div class="text-xs font-black muted">Situação geral</div>
+          <div id="quickMix" class="text-sm mt-2 muted">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lg:col-span-7 panel p-4">
+      <div class="text-lg font-black">Ranking de consultores</div>
+      <div class="text-sm muted">Ordenado por valor pago (e mostra total e número de vendas)</div>
+
+      <div class="mt-4 tableWrap">
+        <div class="overflow-auto">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Consultor</th>
+                <th>Vendas</th>
+                <th>Total comissão</th>
+                <th>Pago</th>
+                <th>Pendente</th>
+                <th>Atrasado</th>
+              </tr>
+            </thead>
+            <tbody id="rankBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FORM + TABELA -->
+  <section class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <div class="lg:col-span-4 panel p-4">
+      <div class="text-lg font-black">Adicionar venda</div>
+      <form id="formAdd" class="mt-3 space-y-2">
+        <div id="adminExtras" style="display:none;">
+          <label class="text-xs font-black muted">Admin: nome do consultor</label>
+          <input name="consultorName" class="input mt-1" placeholder="Ex: Pedro" />
+          <label class="text-xs font-black muted mt-2 block">Admin: userId (opcional)</label>
+          <input name="userId" class="input mt-1" placeholder="Se vazio, fica no admin" />
+          <div class="text-xs muted mt-1">Depois eu coloco seletor automático de consultor.</div>
+        </div>
+
+        <input name="cliente" class="input" placeholder="Cliente" required />
+        <input name="produto" class="input" placeholder="Produto" required />
+        <input name="data" class="input" type="date" required />
+
+        <div class="grid grid-cols-2 gap-2">
+          <select name="seguro" class="select">
+            <option>Sim</option>
+            <option selected>Não</option>
+          </select>
+          <select name="baseComissao" class="select">
+            <option value="credito" selected>Base: Crédito</option>
+            <option value="venda">Base: Valor venda</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <input name="cotas" class="input" inputmode="numeric" placeholder="Cotas" required />
+          <input name="valorUnit" class="input" inputmode="decimal" placeholder="Valor unitário" required />
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <input name="valorVenda" class="input" inputmode="decimal" placeholder="Valor venda (se base venda)" />
+          <input name="taxaPct" class="input" inputmode="decimal" placeholder="Comissão % (ex: 0,8)" required />
+        </div>
+
+        <div class="panel p-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs muted font-black">Crédito</div>
+              <div id="pvCredito" class="font-black">—</div>
+              <div id="pvCreditoFinal" class="text-xs muted" style="display:none;">—</div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs muted font-black">Comissão total</div>
+              <div id="pvComissao" class="font-black" style="color:var(--accent);">—</div>
+              <div class="text-xs muted font-black mt-1">Parcela (1/6)</div>
+              <div id="pvParcela" class="font-black">—</div>
+            </div>
+          </div>
+          <p id="pvWarn" class="text-xs" style="display:none; color:var(--warn); font-weight:900; margin-top:8px;"></p>
+        </div>
+
+        <p id="addErr" class="text-sm" style="display:none; color:var(--bad); font-weight:900;"></p>
+        <button class="btn btn-primary w-full">Salvar</button>
+      </form>
+    </div>
+
+    <div class="lg:col-span-8 glass p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-lg font-black">Vendas</div>
+          <div class="text-sm muted">Consultor vê só as próprias • Admin vê todas</div>
+        </div>
+      </div>
+
+      <div class="mt-4 tableWrap">
+        <div class="overflow-auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Consultor</th>
+                <th>Cliente</th>
+                <th>Produto</th>
+                <th>Data</th>
+                <th>Seguro</th>
+                <th>Cotas</th>
+                <th>Unit.</th>
+                <th>Crédito</th>
+                <th>Base</th>
+                <th>%</th>
+                <th>Comissão</th>
+                <th style="text-align:right;">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="/dashboard.js"></script>
+</body>
+</html>
