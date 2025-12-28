@@ -206,8 +206,123 @@
     </div>
   </section>
 
-</main>
+  <!-- ================= FILTROS ================= -->
+<section class="panel p-4">
+  <div class="flex flex-wrap gap-3 items-end">
+    <div>
+      <label class="text-xs muted font-black">Cliente</label>
+      <input id="filtroCliente" class="input" placeholder="Nome do cliente" />
+    </div>
 
+    <div>
+      <label class="text-xs muted font-black">Consultor</label>
+      <input id="filtroConsultor" class="input" placeholder="Nome do consultor" />
+    </div>
+
+    <div>
+      <label class="text-xs muted font-black">Cotas</label>
+      <input id="filtroCotas" class="input" type="number" placeholder="Ex: 3" />
+    </div>
+
+    <div>
+      <label class="text-xs muted font-black">Data início</label>
+      <input id="filtroDataInicio" class="input" type="date" />
+    </div>
+
+    <div>
+      <label class="text-xs muted font-black">Data fim</label>
+      <input id="filtroDataFim" class="input" type="date" />
+    </div>
+
+    <div>
+      <label class="text-xs muted font-black">Status</label>
+      <select id="filtroStatus" class="select">
+        <option value="">Todos</option>
+        <option value="Pago">Pago</option>
+        <option value="Pendente">Pendente</option>
+        <option value="Atrasado">Atrasado</option>
+      </select>
+    </div>
+
+    <button id="btnLimparFiltros" class="btn">Limpar filtros</button>
+  </div>
+</section>
+
+<!-- ================= GRÁFICOS ================= -->
+<section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+  <!-- Gráfico de comissão -->
+  <div class="panel p-4 chart-card">
+    <div class="text-lg font-black">Comissões</div>
+    <div class="text-sm muted mb-3">
+      Pago • Pendente • Atrasado (atualiza conforme filtros)
+    </div>
+    <canvas id="chartComissoes"></canvas>
+  </div>
+
+  <!-- Gráfico de evolução mensal -->
+  <div class="panel p-4 chart-card">
+    <div class="text-lg font-black">Evolução das vendas</div>
+    <div class="text-sm muted mb-3">
+      Evolução mensal da comissão total
+    </div>
+    <canvas id="chartEvolucao"></canvas>
+  </div>
+
+</section>
+
+
+<div class="flex justify-end mb-2">
+  <button id="btnExportarExcel" class="btn btn-primary">
+    📥 Exportar para Excel
+  </button>
+</div>
+
+<!-- ================= MODAL DETALHES ================= -->
+<div id="modalDetalhes" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50">
+  <div class="panel p-6 w-full max-w-3xl">
+    <div class="flex justify-between items-center mb-4">
+      <div class="text-lg font-black">Detalhes da venda</div>
+      <button id="btnFecharDetalhes" class="btn">✖</button>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <input id="detCliente" class="input" placeholder="Cliente" />
+      <input id="detConsultor" class="input" placeholder="Consultor" />
+      <input id="detProduto" class="input" placeholder="Produto" />
+      <input id="detData" type="date" class="input" />
+      <input id="detCotas" type="number" class="input" placeholder="Cotas" />
+      <input id="detValorUnit" type="number" class="input" placeholder="Valor unitário" />
+      <input id="detTaxaPct" type="number" class="input" placeholder="Comissão %" />
+    </div>
+
+    <div class="mt-4">
+      <div class="font-black mb-2">Parcelas</div>
+      <table class="w-full">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Vencimento</th>
+            <th>Status</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody id="parcelasBody"></tbody>
+      </table>
+    </div>
+
+    <div class="flex justify-end gap-2 mt-4">
+      <button id="btnSalvarDetalhes" class="btn btn-primary">
+        💾 Salvar alterações
+      </button>
+    </div>
+  </div>
+</div>
+
+
+
+</main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="/dashboard.js"></script>
 </body>
 </html>
