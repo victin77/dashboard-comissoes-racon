@@ -55,8 +55,12 @@ let chartComissoes = null;
 /* =========================
    API
 ========================= */
-async function api(path, opts){
-  const res = await fetch(path, opts);
+async function api(path, opts = {}){
+  const res = await fetch(path, {
+    credentials: "include", // <<< ESSENCIAL
+    ...opts
+  });
+
   const data = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(data?.error || "Erro");
   return data;
