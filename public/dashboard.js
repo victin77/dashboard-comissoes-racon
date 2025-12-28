@@ -1,9 +1,6 @@
 const THEME_KEY = "dash_theme_v1";
 const LIMIT = 1500000;
 
-/* =========================
-   UTILIDADES
-========================= */
 function money(n){
   return new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(Number(n)||0);
 }
@@ -17,13 +14,8 @@ function parseNumber(s){
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
-function clampCredito(raw){
-  return Math.min(Math.max(raw,0), LIMIT);
-}
+function clampCredito(raw){ return Math.min(Math.max(raw,0), LIMIT); }
 
-/* =========================
-   TEMA
-========================= */
 function setTheme(t){
   document.body.setAttribute("data-theme", t);
   localStorage.setItem(THEME_KEY, t);
@@ -33,7 +25,7 @@ function setTheme(t){
 (function initTheme(){
   const saved = localStorage.getItem(THEME_KEY);
   if(saved) return setTheme(saved);
-  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   setTheme(prefersDark ? "dark" : "light");
 })();
 document.getElementById("btnTheme").addEventListener("click", ()=>{
@@ -41,54 +33,30 @@ document.getElementById("btnTheme").addEventListener("click", ()=>{
   setTheme(cur==="dark" ? "light" : "dark");
 });
 
-/* =========================
-   ESTADO GLOBAL
-========================= */
 let ME = null;
 let LAST_ROWS = [];
 
-/* =========================
-   GRÁFICOS
-========================= */
-let chartComissoes = null;
-
-/* =========================
-   API
-========================= */
-async function api(path, opts = {}){
-  const res = await fetch(path, {
-    credentials: "include", // <<< ESSENCIAL
-    ...opts
-  });
-
+async function api(path, opts){
+  const res = await fetch(path, opts);
   const data = await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data?.error || "Erro");
+  if(!res.ok){
+    throw new Error(data?.error || "Erro");
+  }
   return data;
 }
 
-/* =========================
-   USUÁRIO
-========================= */
 async function loadMe(){
   const me = await api("/api/me");
   ME = me;
-  document.getElementById("meLine").textContent =
-    `Logado como: ${me.name} • Perfil: ${me.role}`;
-  document.getElementById("adminExtras").style.display =
-    (me.role === "admin") ? "block" : "none";
+  document.getElementById("meLine").textContent = `Logado como: ${me.name} • Perfil: ${me.role}`;
+  document.getElementById("adminExtras").style.display = (me.role === "admin") ? "block" : "none";
 }
 
-/* =========================
-   CÁLCULOS
-========================= */
-function baseLabel(b){
-  return b==="venda" ? "Venda" : "Crédito";
-}
+function baseLabel(b){ return b==="venda" ? "Venda" : "Crédito"; }
 
 function badgeSeguro(v){
-  return v==="Sim"
-    ? `<span class="badge">Sim</span>`
-    : `<span class="badge muted">Não</span>`;
+  if(v==="Sim") return `<span class="badge" style="background: rgba(37,99,235,.12);"><span class="dot" style="background: var(--accent)"></span>Sim</span>`;
+  return `<span class="badge" style="background: rgba(148,163,184,.10);"><span class="dot" style="background: var(--muted)"></span>Não</span>`;
 }
 
 function saleComputed(r){
@@ -105,220 +73,227 @@ function saleComputed(r){
   return { credito, base, comissaoTotal, parcelaValor, pagoN, atrasadoN, pendenteN };
 }
 
-/* =========================
-   KPIs + RANKING
-========================= */
 function renderKPIs(rows){
-  let total = 0, pago = 0, atrasado = 0, pendente = 0;
+  const totalVendas = rows.length;
 
-  rows.forEach(r=>{
+  let total = 0;
+  let pago = 0;
+  let atrasado = 0;
+  let pendente = 0;
+
+  let parcelasTotal = 0;
+  let parcelasPago = 0;
+  let parcelasAtrasado = 0;
+  let parcelasPendente = 0;
+
+  for(const r of rows){
     const c = saleComputed(r);
     total += c.comissaoTotal;
+
+    parcelasTotal += 6;
+    parcelasPago += c.pagoN;
+    parcelasAtrasado += c.atrasadoN;
+    parcelasPendente += c.pendenteN;
+
     pago += c.parcelaValor * c.pagoN;
     atrasado += c.parcelaValor * c.atrasadoN;
     pendente += c.parcelaValor * c.pendenteN;
-  });
+  }
 
   document.getElementById("kpiTotal").textContent = money(total);
+  document.getElementById("kpiVendas").textContent = `${totalVendas} venda(s) • ${parcelasTotal} parcela(s) no total`;
+
   document.getElementById("kpiPago").textContent = money(pago);
+  const pagoPct = total > 0 ? (pago / total) * 100 : 0;
+  document.getElementById("kpiPagoPct").textContent = `${pct(pagoPct).replace("%","")}% do total • ${parcelasPago}/${parcelasTotal} parcelas pagas`;
+
   document.getElementById("kpiPendente").textContent = money(pendente);
+  document.getElementById("kpiPendenteInfo").textContent = `${parcelasPendente}/${parcelasTotal} parcelas pendentes`;
+
   document.getElementById("kpiAtrasado").textContent = money(atrasado);
+  document.getElementById("kpiAtrasadoInfo").textContent = `${parcelasAtrasado}/${parcelasTotal} parcelas atrasadas`;
+
+  // Resumo rápido
+  const ticket = totalVendas > 0 ? total / totalVendas : 0;
+  document.getElementById("quickTicket").textContent = money(ticket);
+  document.getElementById("quickParcelas").textContent = `${parcelasTotal} (P: ${parcelasPago} • Pen: ${parcelasPendente} • Atr: ${parcelasAtrasado})`;
+  document.getElementById("quickMix").textContent =
+    `Pago: ${money(pago)} • Pendente: ${money(pendente)} • Atrasado: ${money(atrasado)} • Comissão total: ${money(total)}`;
+
+  return { total, pago, atrasado, pendente };
 }
 
 function renderRanking(rows){
-  const map = {};
-  rows.forEach(r=>{
-    const k = r.consultorName || "—";
-    map[k] ??= { nome:k, vendas:0, total:0, pago:0 };
-    const c = saleComputed(r);
-    map[k].vendas++;
-    map[k].total += c.comissaoTotal;
-    map[k].pago += c.parcelaValor * c.pagoN;
-  });
+  const by = new Map();
 
-  const arr = Object.values(map).sort((a,b)=>b.pago-a.pago);
-  document.getElementById("rankBody").innerHTML = arr.map((r,i)=>`
+  for(const r of rows){
+    const key = r.consultorName || "—";
+    if(!by.has(key)){
+      by.set(key, { consultor:key, vendas:0, total:0, pago:0, pendente:0, atrasado:0 });
+    }
+    const agg = by.get(key);
+    agg.vendas += 1;
+
+    const c = saleComputed(r);
+    agg.total += c.comissaoTotal;
+    agg.pago += c.parcelaValor * c.pagoN;
+    agg.pendente += c.parcelaValor * c.pendenteN;
+    agg.atrasado += c.parcelaValor * c.atrasadoN;
+  }
+
+  const arr = Array.from(by.values())
+    .sort((a,b)=> (b.pago - a.pago) || (b.total - a.total) || (b.vendas - a.vendas));
+
+  const rankBody = document.getElementById("rankBody");
+  rankBody.innerHTML = arr.map((x,i)=>`
     <tr>
-      <td>${i+1}</td>
-      <td>${r.nome}</td>
-      <td>${r.vendas}</td>
-      <td>${money(r.total)}</td>
-      <td>${money(r.pago)}</td>
+      <td><b>${i+1}</b></td>
+      <td><b>${x.consultor}</b></td>
+      <td>${x.vendas}</td>
+      <td><b>${money(x.total)}</b></td>
+      <td><b style="color:var(--good)">${money(x.pago)}</b></td>
+      <td><b style="color:var(--warn)">${money(x.pendente)}</b></td>
+      <td><b style="color:var(--bad)">${money(x.atrasado)}</b></td>
     </tr>
-  `).join("");
+  `).join("") || `<tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">Sem dados para ranking.</td></tr>`;
+
+  const top = arr[0];
+  if(top){
+    document.getElementById("quickTop").textContent = `${top.consultor}`;
+    document.getElementById("quickTopSub").textContent = `Pago: ${money(top.pago)} • Total: ${money(top.total)} • Vendas: ${top.vendas}`;
+  } else {
+    document.getElementById("quickTop").textContent = "—";
+    document.getElementById("quickTopSub").textContent = "—";
+  }
 }
 
-/* =========================
-   FILTROS
-========================= */
-let FILTROS = {
-  cliente: "",
-  cotas: "",
-  dataInicio: "",
-  dataFim: "",
-  status: ""
-};
+async function loadSales(){
+  const { rows } = await api("/api/sales");
+  LAST_ROWS = rows;
 
-function aplicarFiltros(vendas){
-  return vendas.filter(v=>{
-    if (FILTROS.cliente && !v.cliente.toLowerCase().includes(FILTROS.cliente.toLowerCase())) return false;
-    if (FILTROS.cotas && Number(v.cotas) !== Number(FILTROS.cotas)) return false;
-    if (FILTROS.dataInicio && v.data < FILTROS.dataInicio) return false;
-    if (FILTROS.dataFim && v.data > FILTROS.dataFim) return false;
-
-    if (FILTROS.status) {
-      const c = saleComputed(v);
-      if (FILTROS.status === "Pago" && c.pagoN === 0) return false;
-      if (FILTROS.status === "Pendente" && c.pendenteN === 0) return false;
-      if (FILTROS.status === "Atrasado" && c.atrasadoN === 0) return false;
-    }
-    return true;
-  });
-}
-
-/* =========================
-   GRÁFICO — COMISSÕES (PIZZA)
-========================= */
-function renderGraficoComissoes(rows){
-  let pago = 0, pendente = 0, atrasado = 0;
-
-  rows.forEach(r=>{
-    const c = saleComputed(r);
-    pago += c.parcelaValor * c.pagoN;
-    pendente += c.parcelaValor * c.pendenteN;
-    atrasado += c.parcelaValor * c.atrasadoN;
-  });
-
-  const ctx = document.getElementById("chartComissoes");
-  if(!ctx) return;
-  if(chartComissoes) chartComissoes.destroy();
-
-  chartComissoes = new Chart(ctx, {
-    type: "doughnut",
-    data: {
-      labels: ["Pago", "Pendente", "Atrasado"],
-      datasets: [{
-        data: [pago, pendente, atrasado],
-        backgroundColor: [
-          "rgba(34,197,94,.85)",
-          "rgba(245,158,11,.85)",
-          "rgba(239,68,68,.85)"
-        ],
-        borderWidth: 0
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: "65%",
-      layout: { padding: 10 },
-      onClick: (_, elements) => {
-        if (!elements.length) {
-          FILTROS.status = "";
-        } else {
-          FILTROS.status = chartComissoes.data.labels[elements[0].index];
-        }
-        atualizarDashboard();
-      },
-      plugins: {
-        legend: {
-          position: "bottom",
-          labels: { color: "#94a3b8", usePointStyle: true }
-        },
-        tooltip: {
-          callbacks: {
-            label: ctx => `${ctx.label}: ${money(ctx.raw)}`
-          }
-        }
-      }
-    }
-  });
-}
-
-/* =========================
-   DASHBOARD
-========================= */
-function atualizarDashboard(){
-  const rows = aplicarFiltros(LAST_ROWS);
-  renderKPIs(rows);
-  renderRanking(rows);
-  renderGraficoComissoes(rows);
-
-  document.getElementById("tbody").innerHTML = rows.map(r=>{
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = rows.map(r=>{
     const c = saleComputed(r);
     return `
       <tr>
-        <td>${r.consultorName||"—"}</td>
+        <td><b>${r.consultorName || "—"}</b></td>
         <td>${r.cliente}</td>
         <td>${r.produto}</td>
         <td>${r.data}</td>
         <td>${badgeSeguro(r.seguro)}</td>
-        <td>${r.cotas}</td>
-        <td>${money(r.valorUnit)}</td>
-        <td>${money(c.credito)}</td>
+        <td><b>${r.cotas}</b></td>
+        <td><b>${money(r.valorUnit)}</b></td>
+        <td><b>${money(c.credito)}</b></td>
         <td>${baseLabel(r.baseComissao)}</td>
         <td>${pct(r.taxaPct)}</td>
-        <td>${money(c.comissaoTotal)}</td>
-        <td><button class="btn" onclick='abrirDetalhes(${JSON.stringify(r)})'>🔍</button></td>
+        <td><b>${money(c.comissaoTotal)}</b></td>
+        <td style="text-align:right;">
+          <button class="btn" onclick="delSale('${r.id}')">🗑 Excluir</button>
+        </td>
       </tr>
     `;
-  }).join("");
+  }).join("") || `<tr><td colspan="12" class="muted" style="text-align:center;padding:16px;">Sem vendas ainda.</td></tr>`;
+
+  renderKPIs(rows);
+  renderRanking(rows);
 }
 
-/* =========================
-   VENDAS
-========================= */
-async function loadSales(){
-  const { rows } = await api("/api/sales");
-  LAST_ROWS = rows;
-  atualizarDashboard();
+window.delSale = async (id) => {
+  if(!confirm("Excluir esta venda?")) return;
+  try{
+    await api(`/api/sales/${id}`, { method:"DELETE" });
+    await loadSales();
+  }catch(e){
+    alert(e.message);
+  }
+};
+
+function updatePreview(){
+  const f = document.getElementById("formAdd");
+  const fd = new FormData(f);
+
+  const cotas = Math.max(0, Math.floor(parseNumber(fd.get("cotas"))));
+  const unit = Math.max(0, parseNumber(fd.get("valorUnit")));
+  const taxa = parseNumber(fd.get("taxaPct"));
+  const base = fd.get("baseComissao");
+
+  const creditoRaw = cotas * unit;
+  const credito = clampCredito(creditoRaw);
+  const valorVenda = Math.max(0, parseNumber(fd.get("valorVenda")));
+
+  const baseVal = (base==="venda") ? valorVenda : credito;
+  const comissao = baseVal * (taxa/100);
+
+  document.getElementById("pvCredito").textContent = creditoRaw ? money(creditoRaw) : "—";
+
+  if(creditoRaw > LIMIT){
+    document.getElementById("pvCreditoFinal").style.display = "block";
+    document.getElementById("pvCreditoFinal").textContent = `Crédito final (limitado): ${money(LIMIT)}`;
+    document.getElementById("pvWarn").style.display = "block";
+    document.getElementById("pvWarn").textContent = `⚠️ Crédito bruto ${money(creditoRaw)} passou do limite. Foi ajustado para ${money(LIMIT)}.`;
+  } else {
+    document.getElementById("pvCreditoFinal").style.display = "none";
+    document.getElementById("pvWarn").style.display = "none";
+  }
+
+  document.getElementById("pvComissao").textContent = comissao ? money(comissao) : "—";
+  document.getElementById("pvParcela").textContent = comissao ? money(comissao/6) : "—";
 }
 
-/* =========================
-   MODAL
-========================= */
-let vendaSelecionada = null;
+document.getElementById("formAdd").addEventListener("input", updatePreview);
+document.getElementById("formAdd").addEventListener("change", updatePreview);
 
-function gerarParcelas(data){
-  const base = new Date(data);
-  return Array.from({length:6},(_,i)=>{
-    const d = new Date(base);
-    d.setMonth(d.getMonth()+i+1);
-    return { numero:i+1, vencimento:d.toISOString().slice(0,10), status:"Pendente" };
-  });
-}
+document.getElementById("formAdd").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const addErr = document.getElementById("addErr");
+  addErr.style.display = "none";
 
-function abrirDetalhes(v){
-  vendaSelecionada = v;
-  if(!v.parcelas) v.parcelas = gerarParcelas(v.data);
-  document.getElementById("modalDetalhes").classList.remove("hidden");
-  document.getElementById("parcelasBody").innerHTML =
-    v.parcelas.map((p,i)=>`
-      <tr>
-        <td>${p.numero}</td>
-        <td>${p.vencimento}</td>
-        <td>${p.status}</td>
-        <td>${p.status!=="Pago" ? `<button onclick="marcarPaga(${i})">Pagar</button>` : ""}</td>
-      </tr>
-    `).join("");
-}
+  const fd = new FormData(e.target);
 
-function marcarPaga(i){
-  vendaSelecionada.parcelas[i].status = "Pago";
-  abrirDetalhes(vendaSelecionada);
-}
+  const payload = {
+    cliente: fd.get("cliente"),
+    produto: fd.get("produto"),
+    data: fd.get("data"),
+    seguro: fd.get("seguro"),
+    cotas: fd.get("cotas"),
+    valorUnit: fd.get("valorUnit"),
+    valorVenda: fd.get("valorVenda"),
+    baseComissao: fd.get("baseComissao"),
+    taxaPct: fd.get("taxaPct")
+  };
 
-document.getElementById("btnFecharDetalhes").onclick =
-  ()=>document.getElementById("modalDetalhes").classList.add("hidden");
+  if(ME?.role === "admin"){
+    payload.consultorName = fd.get("consultorName");
+    payload.userId = fd.get("userId");
+  }
 
-/* =========================
-   INIT
-========================= */
+  try{
+    await api("/api/sales", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    e.target.reset();
+    updatePreview();
+    await loadSales();
+  }catch(err){
+    addErr.textContent = err.message;
+    addErr.style.display = "block";
+  }
+});
+
+document.getElementById("btnRefresh").addEventListener("click", loadSales);
+document.getElementById("btnLogout").addEventListener("click", async ()=>{
+  try{ await api("/api/logout", { method:"POST" }); } catch(e){}
+  window.location.href = "/";
+});
+
 (async function init(){
   try{
     await loadMe();
     await loadSales();
-  }catch{
+    updatePreview();
+  }catch(e){
     window.location.href = "/";
   }
 })();
