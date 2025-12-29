@@ -34,7 +34,7 @@ export function seedUsersIfNeeded({ adminPassword }) {
   // Senhas simples (texto puro) — funciona, mas não é o ideal para produção.
   // Para ficar seguro “de verdade”, depois a gente coloca hash.
   data.users = [
-    { id: "u_admin", username: "admin", displayName: "Administrador", role: "admin", password: adminPassword || "victor é lindo" },
+    { id: "u_admin", username: "admin", displayName: "Administrador", role: "admin", password: adminPassword || "2512" },
 
     { id: "u_graziele", username: "graziele", displayName: "Graziele", role: "consultor", password: "1234" },
     { id: "u_pedro", username: "pedro", displayName: "Pedro", role: "consultor", password: "1234" },
@@ -87,3 +87,4 @@ export function deleteSale(id) {
   writeFileSafe(data);
   return { ok: data.sales.length !== before };
 }
+
