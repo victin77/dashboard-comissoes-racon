@@ -110,7 +110,8 @@ app.post("/api/login", (req, res) => {
     username: user.username
   });
 
-  res.cookie("sid", sid, { httpOnly: true, sameSite: "lax" });
+  const isProd = process.env.NODE_ENV === "production";
+  res.cookie("sid", sid, { httpOnly: true, sameSite: "lax", secure: isProd, maxAge: 1000 * 60 * 60 * 12 });
   res.json({ ok: true, role: user.role, name: user.displayName, username: user.username });
 });
 
