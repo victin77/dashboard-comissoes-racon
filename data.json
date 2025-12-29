@@ -1,0 +1,47 @@
+{
+  "users": [
+    {
+      "id": "u_admin",
+      "username": "admin",
+      "displayName": "Administrador",
+      "role": "admin",
+      "password": "victor é lindo"
+    },
+    {
+      "id": "u_graziele",
+      "username": "graziele",
+      "displayName": "Graziele",
+      "role": "consultor",
+      "password": "1234"
+    },
+    {
+      "id": "u_pedro",
+      "username": "pedro",
+      "displayName": "Pedro",
+      "role": "consultor",
+      "password": "1234"
+    },
+    {
+      "id": "u_gustavo",
+      "username": "gustavo",
+      "displayName": "Gustavo",
+      "role": "consultor",
+      "password": "1234"
+    },
+    {
+      "id": "u_poli",
+      "username": "poli",
+      "displayName": "Poli",
+      "role": "consultor",
+      "password": "1234"
+    },
+    {
+      "id": "u_victor",
+      "username": "victor",
+      "displayName": "Victor",
+      "role": "consultor",
+      "password": "1234"
+    }
+  ],
+  "sales": []
+}

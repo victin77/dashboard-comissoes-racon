@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dashboard de Comissões • RACON</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="./styles.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
+</head>
+
+<body data-theme="light">
+  <!-- TOP BAR -->
+  <header class="topbar sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="brand-dot" aria-hidden="true"></div>
+        <div>
+          <div class="text-xl sm:text-2xl font-black leading-tight">Dashboard de Comissões</div>
+          <div id="meLine" class="text-xs sm:text-sm muted">—</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap justify-end">
+        <span class="chip">Limite crédito: R$ 1.500.000</span>
+        <button id="btnTheme" class="btn" title="Alternar tema">🌙</button>
+        <button id="btnLogout" class="btn btn-primary">Sair</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto p-4 space-y-4">
+
+    <!-- KPIs -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="kpi panel p-4">
+        <div class="kpi-top">
+          <div class="kpi-label">Comissão Total</div><div class="kpi-icon">💠</div>
+        </div>
+        <div id="kpiTotal" class="kpi-value">—</div>
+        <div id="kpiTotalInfo" class="kpi-sub">—</div>
+        <canvas id="sparkTotal" class="spark" height="32"></canvas>
+      </div>
+
+      <div class="kpi panel p-4" style="border-color: rgba(16,185,129,.35);">
+        <div class="kpi-top">
+          <div class="kpi-label">Pagas</div><div class="kpi-icon">✅</div>
+        </div>
+        <div id="kpiPago" class="kpi-value" style="color:var(--good);">—</div>
+        <div id="kpiPagoInfo" class="kpi-sub">—</div>
+        <canvas id="sparkPago" class="spark" height="32"></canvas>
+      </div>
+
+      <div class="kpi panel p-4" style="border-color: rgba(245,158,11,.35);">
+        <div class="kpi-top">
+          <div class="kpi-label">Pendentes</div><div class="kpi-icon">⏳</div>
+        </div>
+        <div id="kpiPendente" class="kpi-value" style="color:var(--warn);">—</div>
+        <div id="kpiPendenteInfo" class="kpi-sub">—</div>
+        <canvas id="sparkPendente" class="spark" height="32"></canvas>
+      </div>
+
+      <div class="kpi panel p-4" style="border-color: rgba(239,68,68,.35);">
+        <div class="kpi-top">
+          <div class="kpi-label">Atrasadas</div><div class="kpi-icon">⚠️</div>
+        </div>
+        <div id="kpiAtrasado" class="kpi-value" style="color:var(--bad);">—</div>
+        <div id="kpiAtrasadoInfo" class="kpi-sub">—</div>
+        <canvas id="sparkAtrasado" class="spark" height="32"></canvas>
+      </div>
+    </section>
+
+    <div class="panel p-3 flex items-center justify-between">
+      <div class="text-xs muted">Resumo do filtro</div>
+      <div id="kpiVendas" class="font-black">—</div>
+    </div>
+
+
+    <!-- CHART + FILTERS + QUICK -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      <div class="panel p-4 lg:col-span-2">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div class="text-sm font-black">Visão geral</div>
+            <div class="muted text-xs mt-1">Hover para detalhes • clique no gráfico para filtrar automaticamente.</div>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button id="btnRefresh" class="btn btn-sm">Atualizar</button>
+            <button id="btnExportCsv" class="btn btn-sm">Exportar CSV</button>
+            <button id="btnExportXlsx" class="btn btn-sm btn-primary">Exportar Excel</button>
+            <button id="btnToggleFilters" class="btn btn-sm">Filtros</button>
+          </div>
+        </div>
+
+        <div id="activeChips" class="chips-row mt-3" style="display:none;"></div>
+
+        <div id="filtersPanel" class="panel-soft mt-3" style="display:none;">
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <div>
+              <div class="label">De</div>
+              <input id="fDateFrom" type="date" class="input" />
+            </div>
+            <div>
+              <div class="label">Até</div>
+              <input id="fDateTo" type="date" class="input" />
+            </div>
+            <div>
+              <div class="label">Status</div>
+              <select id="fStatus" class="input">
+                <option value="todos">Todos</option>
+                <option value="Pago">Pago</option>
+                <option value="Pendente">Pendente</option>
+                <option value="Atrasado">Atrasado</option>
+              </select>
+            </div>
+            <div>
+              <div class="label">Buscar</div>
+              <input id="fSearch" placeholder="Cliente, produto…" class="input" />
+            </div>
+            <div id="fConsultorWrap" style="display:none;">
+              <div class="label">Consultor</div>
+              <select id="fConsultor" class="input">
+                <option value="todos">Todos</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-3 flex items-center gap-2 flex-wrap">
+            <button id="btnApplyFilters" class="btn btn-sm btn-primary">Aplicar</button>
+            <button id="btnClearFilters" class="btn btn-sm">Limpar</button>
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <div class="tabs">
+            <button class="tab active" data-tab="monthly" id="tabMonthly">Evolução mensal</button>
+            <button class="tab" data-tab="consultors" id="tabConsultors">Consultores</button>
+            <button class="tab" data-tab="status" id="tabStatus">Status</button>
+          </div>
+          <div class="panel p-3 mt-2">
+            <canvas id="chartComissoes" height="110"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel p-4">
+        <div class="text-sm font-black">Resumo rápido</div>
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div class="mini">
+            <div class="mini-label">Ticket médio</div>
+            <div id="quickTicket" class="mini-value">—</div>
+          </div>
+          <div class="mini">
+            <div class="mini-label">Críticos</div>
+            <div id="quickCriticos" class="mini-value">—</div>
+          </div>
+          <div class="mini col-span-2">
+            <div class="mini-label">Top consultor (pagas)</div>
+            <div id="quickTop" class="mini-value">—</div>
+            <div id="quickTopSub" class="mini-sub muted">—</div>
+          </div>
+        </div>
+        <div class="muted text-xs mt-4">*Ranking completo só aparece para admin (pra não desmotivar ninguém).</div>
+      </div>
+    </section>
+
+    <!-- RANKING (ADMIN ONLY) -->
+    <section id="rankingSection" class="panel p-4" style="display:none;">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div class="text-sm font-black">Ranking (admin)</div>
+          <div class="muted text-xs">Desempenho por comissão paga e volume de vendas.</div>
+        </div>
+      </div>
+
+      <div class="podium mt-4">
+        <div class="podium-card" id="podium2">
+          <div class="podium-place">🥈 2º</div>
+          <div class="podium-name">—</div>
+          <div class="podium-metric muted">—</div>
+        </div>
+        <div class="podium-card podium-win" id="podium1">
+          <div class="podium-place">🥇 1º</div>
+          <div class="podium-name">—</div>
+          <div class="podium-metric muted">—</div>
+        </div>
+        <div class="podium-card" id="podium3">
+          <div class="podium-place">🥉 3º</div>
+          <div class="podium-name">—</div>
+          <div class="podium-metric muted">—</div>
+        </div>
+      </div>
+
+      <div class="mt-4 overflow-auto">
+        <table class="w-full">
+          <thead>
+            <tr class="thead">
+              <th class="px-3 py-2 text-left">#</th>
+              <th class="px-3 py-2 text-left">Consultor</th>
+              <th class="px-3 py-2 text-right">Pago</th>
+              <th class="px-3 py-2 text-right">Total</th>
+              <th class="px-3 py-2 text-right">Vendas</th>
+              <th class="px-3 py-2 text-right">Progresso</th>
+            </tr>
+          </thead>
+          <tbody id="rankBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- FORM + TABELA -->
+  <section class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <div class="lg:col-span-4 panel p-4">
+      <div class="text-lg font-black">Adicionar venda</div>
+      <form id="formAdd" class="mt-3 space-y-2">
+        <div id="adminExtras" style="display:none;">
+          <label class="text-xs font-black muted">Admin: nome do consultor</label>
+          <input name="consultorName" class="input mt-1" placeholder="Ex: Pedro" />
+          <label class="text-xs font-black muted mt-2 block">Admin: userId (opcional)</label>
+          <input name="userId" class="input mt-1" placeholder="Se vazio, fica no admin" />
+          <div class="text-xs muted mt-1">Depois eu coloco seletor automático de consultor.</div>
+        </div>
+
+        <input name="cliente" class="input" placeholder="Cliente" required />
+        <input name="produto" class="input" placeholder="Produto" required />
+        <input name="data" class="input" type="date" required />
+
+        <div class="grid grid-cols-2 gap-2">
+          <select name="seguro" class="select">
+            <option>Sim</option>
+            <option selected>Não</option>
+          </select>
+          <select name="baseComissao" class="select">
+            <option value="credito" selected>Base: Crédito</option>
+            <option value="venda">Base: Valor venda</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <input name="cotas" class="input" inputmode="numeric" placeholder="Cotas" required />
+          <input name="valorUnit" class="input" inputmode="decimal" placeholder="Valor unitário" required />
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <input name="valorVenda" class="input" inputmode="decimal" placeholder="Valor venda (se base venda)" />
+          <input name="taxaPct" class="input" inputmode="decimal" placeholder="Comissão % (ex: 0,8)" required />
+        </div>
+
+        <div class="panel p-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs muted font-black">Crédito</div>
+              <div id="pvCredito" class="font-black">—</div>
+              <div id="pvCreditoFinal" class="text-xs muted" style="display:none;">—</div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs muted font-black">Comissão total</div>
+              <div id="pvComissao" class="font-black" style="color:var(--accent);">—</div>
+              <div class="text-xs muted font-black mt-1">Parcela (1/6)</div>
+              <div id="pvParcela" class="font-black">—</div>
+            </div>
+          </div>
+          <p id="pvWarn" class="text-xs" style="display:none; color:var(--warn); font-weight:900; margin-top:8px;"></p>
+        </div>
+
+        <p id="addErr" class="text-sm" style="display:none; color:var(--bad); font-weight:900;"></p>
+        <button class="btn btn-primary w-full">Salvar</button>
+      </form>
+    </div>
+
+    <div class="lg:col-span-8 glass p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-lg font-black">Vendas</div>
+          <div class="text-sm muted">Consultor vê só as próprias • Admin vê todas</div>
+          <div class="mt-3 grid grid-cols-1 lg:grid-cols-12 gap-2">
+            <div class="lg:col-span-3">
+              <label class="text-xs font-black muted">De</label>
+              <input id="fDateFrom" class="input mt-1" type="date" />
+            </div>
+            <div class="lg:col-span-3">
+              <label class="text-xs font-black muted">Até</label>
+              <input id="fDateTo" class="input mt-1" type="date" />
+            </div>
+            <div class="lg:col-span-3">
+              <label class="text-xs font-black muted">Status</label>
+              <select id="fStatus" class="select mt-1">
+                <option value="todos" selected>Todos</option>
+                <option value="Pago">Pago</option>
+                <option value="Pendente">Pendente</option>
+                <option value="Atrasado">Atrasado</option>
+              </select>
+            </div>
+            <div id="fConsultorWrap" class="lg:col-span-3" style="display:none;">
+              <label class="text-xs font-black muted">Consultor</label>
+              <select id="fConsultor" class="select mt-1">
+                <option value="todos" selected>Todos</option>
+              </select>
+            </div>
+
+            <div class="lg:col-span-6">
+              <label class="text-xs font-black muted">Buscar (cliente / produto)</label>
+              <input id="fSearch" class="input mt-1" placeholder="Ex: João, Imóvel, Auto..." />
+            </div>
+
+            <div class="lg:col-span-6 flex flex-wrap items-end gap-2">
+              <button id="btnClearFilters" class="btn">Limpar filtros</button>
+              <button id="btnExportCsv" class="btn">⬇️ Exportar CSV</button>
+              <button id="btnExportXlsx" class="btn btn-primary">⬇️ Exportar Excel</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="mt-4 tableWrap">
+        <div class="overflow-auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Consultor</th>
+                <th>Cliente</th>
+                <th>Produto</th>
+                <th>Data</th>
+                <th>Seguro</th>
+                <th>Cotas</th>
+                <th>Unit.</th>
+                <th>Crédito</th>
+                <th>Base</th>
+                <th>%</th>
+                <th>Comissão</th>
+                <th style="text-align:right;">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  </main>
+
+  <div id="saleModal" class="fixed inset-0 z-50" style="display:none;">
+  <div class="absolute inset-0" style="background:rgba(0,0,0,.55);"></div>
+  <div class="relative max-w-3xl mx-auto mt-10 p-4">
+    <div class="glass p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="text-lg font-black">Detalhes da venda</div>
+          <div id="modalSub" class="text-xs muted">—</div>
+        </div>
+        <div class="flex gap-2">
+          <button id="btnDeleteSale" class="btn" style="border-color: rgba(239,68,68,.35); color: var(--bad);">Excluir</button>
+          <button id="btnCloseModal" class="btn">Fechar</button>
+        </div>
+      </div>
+
+      <form id="formEdit" class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div id="editAdminBlock" class="md:col-span-2" style="display:none;">
+          <div class="panel p-3">
+            <div class="text-xs font-black muted">Campos de admin</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+              <input name="consultorName" class="input" placeholder="Nome do consultor" />
+              <input name="userId" class="input" placeholder="userId (opcional)" />
+            </div>
+          </div>
+        </div>
+
+        <input name="cliente" class="input" placeholder="Cliente" required />
+        <input name="produto" class="input" placeholder="Produto" required />
+        <input name="data" class="input" type="date" required />
+
+        <select name="seguro" class="select">
+          <option>Sim</option>
+          <option selected>Não</option>
+        </select>
+
+        <select name="baseComissao" class="select">
+          <option value="credito" selected>Base: Crédito</option>
+          <option value="venda">Base: Valor venda</option>
+        </select>
+
+        <input name="cotas" class="input" inputmode="numeric" placeholder="Cotas" required />
+        <input name="valorUnit" class="input" inputmode="decimal" placeholder="Valor unitário" required />
+        <input name="valorVenda" class="input" inputmode="decimal" placeholder="Valor venda (se base venda)" />
+        <input name="taxaPct" class="input" inputmode="decimal" placeholder="Comissão % (ex: 0,8)" required />
+
+        <div class="md:col-span-2 panel p-3">
+          <div class="flex items-center justify-between">
+            <div class="text-xs font-black muted">Parcelas (6x)</div>
+            <div class="text-xs muted">Clique para alternar</div>
+          </div>
+          <div id="parcelasEdit" class="mt-2 grid grid-cols-3 md:grid-cols-6 gap-2"></div>
+          <div class="text-xs muted mt-2">Ordem: 1/6 até 6/6</div>
+        </div>
+
+        <p id="editErr" class="text-sm md:col-span-2" style="display:none; color:var(--bad); font-weight:900;"></p>
+        <div class="md:col-span-2 flex flex-wrap gap-2 justify-end">
+          <button id="btnSaveEdit" class="btn btn-primary" type="submit">Salvar alterações</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+
+
+  <script src="./dashboard.js"></script>
+</body>
+</html>
