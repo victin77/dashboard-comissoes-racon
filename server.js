@@ -23,7 +23,7 @@ app.use(express.static("public"));
 seedUsersIfNeeded({ adminPassword: process.env.ADMIN_PASSWORD });
 
 /* =========================================================
-   SESSÃO ASSINADA (cookie stateless) — resolve loop no Render
+   SESSÃO ASSINADA (cookie stateless) — estável no Render
 ========================================================= */
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev_secret_change_me";
 
@@ -41,7 +41,6 @@ function b64urlEncodeString(str) {
 
 function b64urlDecodeToString(b64u) {
   const b64 = b64u.replace(/-/g, "+").replace(/_/g, "/");
-  // re-padding
   const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
   return Buffer.from(b64 + pad, "base64").toString("utf8");
 }
@@ -65,7 +64,6 @@ function readToken(token) {
   const [body, sig] = parts;
   const expected = sign(body);
 
-  // timing-safe compare
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return null;
@@ -94,7 +92,6 @@ function adminOnly(req, res, next) {
   if (req.user.role !== "admin") return res.status(403).json({ error: "Acesso negado" });
   next();
 }
-
 /* ========================================================= */
 
 const LIMIT_CREDITO = 1500000;
@@ -160,8 +157,7 @@ app.post("/api/login", (req, res) => {
     return res.status(401).json({ error: "Usuário ou senha inválidos" });
   }
 
-  const isProd = process.env.NODE_ENV === "production";
-
+  // Render serve em HTTPS → use secure:true para fixar cookie corretamente.
   const payload = {
     userId: user.id,
     role: user.role,
@@ -175,7 +171,8 @@ app.post("/api/login", (req, res) => {
   res.cookie("sid", token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: isProd,
+    secure: true,
+    path: "/",
     maxAge: 1000 * 60 * 60 * 12
   });
 
@@ -183,7 +180,7 @@ app.post("/api/login", (req, res) => {
 });
 
 app.post("/api/logout", auth, (req, res) => {
-  res.clearCookie("sid");
+  res.clearCookie("sid", { path: "/" });
   res.json({ ok: true });
 });
 
@@ -275,7 +272,6 @@ app.put("/api/sales/:id", auth, (req, res) => {
 app.delete("/api/sales/:id", auth, (req, res) => {
   const id = req.params.id;
 
-  // carrega lista do usuário e checa se ele tem essa venda
   const me = req.user;
   const mine = listSalesForUser({ role: me.role, userId: me.userId });
   const isMine = mine.some((s) => s.id === id);
