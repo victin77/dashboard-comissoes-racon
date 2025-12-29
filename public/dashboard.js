@@ -34,22 +34,23 @@ function debounce(fn, wait=250){
   };
 }
 
-/* ===== API (FIX 304/CACHE) ===== */
-async function api(path, opts = {}) {
+/* ========= API (FIX DEFINITIVO 304/CACHE) ========= */
+async function api(path, opts = {}){
   const res = await fetch(path, {
-    credentials: "include",
-    cache: "no-store", // <<< evita 304 vindo do cache
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    credentials:"include",
+    cache: "no-store", // <<< impede 304 do cache
+    headers: { "Content-Type":"application/json" , ...(opts.headers||{}) },
     ...opts
   });
 
-  const text = await res.text().catch(() => "");
+  // 304/204 podem vir sem JSON
+  const text = await res.text().catch(()=> "");
   let data = {};
-  if (text) {
+  if(text){
     try { data = JSON.parse(text); } catch { data = {}; }
   }
 
-  if (!res.ok) throw new Error(data.error || `Erro HTTP ${res.status}`);
+  if(!res.ok) throw new Error(data.error || `Erro HTTP ${res.status}`);
   return data;
 }
 
@@ -102,6 +103,7 @@ function rowMatchesStatus(r, status){
 }
 
 function monthKey(dateStr){
+  // expects YYYY-MM-DD
   if(!dateStr || typeof dateStr !== "string" || dateStr.length < 7) return "—";
   return dateStr.slice(0,7);
 }
@@ -113,11 +115,14 @@ async function loadMe(){
   document.getElementById("meLine").textContent = `Logado como: ${me.name} • Perfil: ${me.role}`;
   document.getElementById("adminExtras").style.display = (me.role === "admin") ? "block" : "none";
 
+  // ranking only for admin
   document.getElementById("rankingSection").style.display = (me.role === "admin") ? "block" : "none";
 
+  // consultor filter only for admin
   document.getElementById("fConsultorWrap").style.display = (me.role === "admin") ? "block" : "none";
   document.getElementById("editAdminBlock").style.display = (me.role === "admin") ? "block" : "none";
 
+  // consultor chart tab only for admin (evita desmotivação)
   const tabC = document.getElementById("tabConsultors");
   if(tabC) tabC.style.display = (me.role === "admin") ? "inline-flex" : "none";
   if(me.role !== "admin" && CHART_TAB === "consultors") CHART_TAB = "monthly";
@@ -153,15 +158,19 @@ function applyFilters(rows){
   const { from, to, status, search, consultor } = readFilters();
 
   return rows.filter(r=>{
+    // date
     if(from && r.data < from) return false;
     if(to && r.data > to) return false;
 
+    // status
     if(!rowMatchesStatus(r, status)) return false;
 
+    // consultor
     if(consultor !== "todos"){
       if((r.consultorName||"") !== consultor) return false;
     }
 
+    // search
     if(search){
       const hay = `${r.cliente||""} ${r.produto||""}`.toLowerCase();
       if(!hay.includes(search)) return false;
@@ -207,40 +216,7 @@ function renderKpis(rows){
   document.getElementById("kpiAtrasado").textContent = money(atrasado);
   document.getElementById("kpiAtrasadoInfo").textContent = total>0 ? `${pct((atrasado/total)*100)} do total` : "—";
 
-  const ticket = rows.length ? (total/rows.length) : 0;
-  document.getElementById("quickTicket").textContent = money(ticket);
-
-  const agg = aggregateByConsultor(rows);
-  const top = agg.sort((a,b)=> (b.pago - a.pago) || (b.total - a.total))[0];
-  document.getElementById("quickTop").textContent = top ? `${top.consultor}` : "—";
-  document.getElementById("quickTopSub").textContent = top ? `${money(top.pago)} pago • ${top.vendas} venda(s)` : "—";
-
-  const crit = agg.reduce((acc,x)=> acc + (x.atrasado>0 ? 1 : 0), 0);
-  document.getElementById("quickCriticos").textContent = String(crit);
-}
-
-function aggregateByConsultor(rows){
-  const by = new Map();
-  for(const r of rows){
-    const key = r.consultorName || "—";
-    if(!by.has(key)){
-      by.set(key, { consultor:key, vendas:0, total:0, pago:0, pendente:0, atrasado:0 });
-    }
-    const agg = by.get(key);
-    agg.vendas += 1;
-
-    const c = saleComputed(r);
-    agg.total += c.comissaoTotal;
-    agg.pago += c.parcelaValor * c.pagoN;
-    agg.pendente += c.parcelaValor * c.pendenteN;
-    agg.atrasado += c.parcelaValor * c.atrasadoN;
-  }
-  return Array.from(by.values());
-}
-
-/* ... daqui pra baixo continua exatamente como o seu arquivo (ranking, chart, table, modal, init etc.) ... */
-
-// quick summary
+  // quick summary
   const ticket = rows.length ? (total/rows.length) : 0;
   document.getElementById("quickTicket").textContent = money(ticket);
 
@@ -252,6 +228,7 @@ function aggregateByConsultor(rows){
 
   const crit = agg.reduce((acc,x)=> acc + (x.atrasado>0 ? 1 : 0), 0);
   document.getElementById("quickCriticos").textContent = String(crit);
+}
 
 function aggregateByConsultor(rows){
   const by = new Map();
@@ -280,7 +257,6 @@ function renderRanking(rows){
 
   const tbody = document.getElementById("rankBody");
   const max = list[0]?.pago || 1;
-
 
   // podium (top 3)
   try{
@@ -324,7 +300,6 @@ function renderRanking(rows){
   }).join("");
 }
 
-
 function renderChart(rows){
   const canvas = document.getElementById("chartComissoes");
   if(!canvas || !window.Chart) return;
@@ -339,6 +314,8 @@ function renderChart(rows){
     let pago=0, pend=0, atra=0;
     for(const r of rows){
       const c = saleComputed(r);
+      // OBS: seu código original usa r.status e c.comissao aqui.
+      // Mantive como está pra não quebrar teu padrão atual.
       if((r.status||"") === "Pago") pago += c.comissao;
       else if((r.status||"") === "Atrasado") atra += c.comissao;
       else pend += c.comissao;
@@ -479,7 +456,6 @@ function renderChart(rows){
   });
 }
 
-
 function renderTable(rows){
   const tbody = document.getElementById("tbody");
   tbody.innerHTML = rows
@@ -519,7 +495,6 @@ function renderTable(rows){
 function escapeHtml(s){
   return String(s||"").replace(/[&<>"']/g, m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
 }
-
 
 function renderActiveChips(){
   const wrap = document.getElementById("activeChips");
@@ -606,7 +581,6 @@ function renderSparks(rows){
     SPARKS.set(id, c);
   }
 }
-
 
 function applyAndRender(){
   const rows = applyFilters(ALL_ROWS);
