@@ -16,10 +16,10 @@
             <div class="text-2xl font-black">Dashboard de Comissões</div>
             <div class="text-sm muted">ADM vê tudo • Consultor vê só o dele</div>
           </div>
-          <button id="btnTheme" class="btn">🌙</button>
+          <button id="btnTheme" class="btn" type="button">🌙</button>
         </div>
 
-        <form id="loginForm" class="mt-6 space-y-3">
+        <form id="loginForm" class="mt-6 space-y-3" autocomplete="on">
           <div>
             <label class="text-xs font-black muted">Entrar como</label>
             <select id="mode" class="select mt-1">
@@ -41,13 +41,14 @@
 
           <div>
             <label class="text-xs font-black muted">Senha</label>
-            <input id="password" class="input mt-1" type="password" placeholder="Digite a senha" required />
+            <!-- adicionei name pra autofill ficar correto -->
+            <input id="password" name="password" class="input mt-1" type="password" placeholder="Digite a senha" required />
             <div class="text-xs muted mt-1">ADM: <b>victor é lindo</b> • Consultor padrão: <b>1234</b></div>
           </div>
 
           <p id="loginErr" class="text-sm" style="display:none; color: var(--bad); font-weight:900;"></p>
 
-          <button class="btn btn-primary w-full">Entrar</button>
+          <button class="btn btn-primary w-full" type="submit">Entrar</button>
         </form>
       </div>
 
@@ -96,6 +97,7 @@ document.getElementById("loginForm").addEventListener("submit", async (e)=>{
 
   const res = await fetch("/api/login", {
     method:"POST",
+    credentials: "include", // <<< ESSENCIAL pro cookie no Render
     headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ username, password })
   });
@@ -106,6 +108,15 @@ document.getElementById("loginForm").addEventListener("submit", async (e)=>{
     loginErr.style.display = "block";
     return;
   }
+
+  // sanity check: garante que cookie ficou válido antes de redirecionar
+  const meRes = await fetch("/api/me", { credentials: "include" });
+  if(!meRes.ok){
+    loginErr.textContent = "Sessão não foi criada (cookie não persistiu). Abra usando HTTPS e tente novamente.";
+    loginErr.style.display = "block";
+    return;
+  }
+
   window.location.href = "/dashboard.html";
 });
 </script>
