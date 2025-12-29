@@ -4,8 +4,6 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
 
-
-
 import {
   seedUsersIfNeeded,
   findUserByUsername,
@@ -24,16 +22,71 @@ app.use(express.static("public"));
 
 seedUsersIfNeeded({ adminPassword: process.env.ADMIN_PASSWORD });
 
-const sessions = new Map(); // sid -> { userId, role, name, username }
+/* =========================================================
+   SESSÃO ASSINADA (cookie stateless) — resolve loop no Render
+========================================================= */
+const SESSION_SECRET = process.env.SESSION_SECRET || "dev_secret_change_me";
 
-function makeSid() {
-  return crypto.randomBytes(24).toString("hex");
+function b64urlFromBuffer(buf) {
+  return buf
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function b64urlEncodeString(str) {
+  return b64urlFromBuffer(Buffer.from(str, "utf8"));
+}
+
+function b64urlDecodeToString(b64u) {
+  const b64 = b64u.replace(/-/g, "+").replace(/_/g, "/");
+  // re-padding
+  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+  return Buffer.from(b64 + pad, "base64").toString("utf8");
+}
+
+function sign(body) {
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest();
+  return b64urlFromBuffer(sig);
+}
+
+function makeToken(payload) {
+  const body = b64urlEncodeString(JSON.stringify(payload));
+  const sig = sign(body);
+  return `${body}.${sig}`;
+}
+
+function readToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+
+  const [body, sig] = parts;
+  const expected = sign(body);
+
+  // timing-safe compare
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return null;
+  if (!crypto.timingSafeEqual(a, b)) return null;
+
+  let payload;
+  try {
+    payload = JSON.parse(b64urlDecodeToString(body));
+  } catch {
+    return null;
+  }
+
+  if (payload?.exp && Date.now() > payload.exp) return null;
+  return payload;
 }
 
 function auth(req, res, next) {
-  const sid = req.cookies.sid;
-  if (!sid || !sessions.has(sid)) return res.status(401).json({ error: "Não autenticado" });
-  req.user = sessions.get(sid);
+  const token = req.cookies.sid;
+  const session = readToken(token);
+  if (!session) return res.status(401).json({ error: "Não autenticado" });
+  req.user = session;
   next();
 }
 
@@ -41,6 +94,8 @@ function adminOnly(req, res, next) {
   if (req.user.role !== "admin") return res.status(403).json({ error: "Acesso negado" });
   next();
 }
+
+/* ========================================================= */
 
 const LIMIT_CREDITO = 1500000;
 
@@ -71,9 +126,12 @@ function normalizeSaleInput(body) {
   const base = baseComissao === "venda" ? valorVenda : credito;
   const comissaoTotal = base * (taxaPct / 100);
 
-  const parcelas = Array.isArray(body.parcelas) && body.parcelas.length === 6
-    ? body.parcelas.map(s => (s === "Pago" || s === "Pendente" || s === "Atrasado") ? s : "Pendente")
-    : Array.from({ length: 6 }, () => "Pendente");
+  const parcelas =
+    Array.isArray(body.parcelas) && body.parcelas.length === 6
+      ? body.parcelas.map((s) =>
+          s === "Pago" || s === "Pendente" || s === "Atrasado" ? s : "Pendente"
+        )
+      : Array.from({ length: 6 }, () => "Pendente");
 
   return {
     cliente: String(body.cliente || "").trim(),
@@ -102,22 +160,29 @@ app.post("/api/login", (req, res) => {
     return res.status(401).json({ error: "Usuário ou senha inválidos" });
   }
 
-  const sid = makeSid();
-  sessions.set(sid, {
+  const isProd = process.env.NODE_ENV === "production";
+
+  const payload = {
     userId: user.id,
     role: user.role,
     name: user.displayName,
-    username: user.username
+    username: user.username,
+    exp: Date.now() + 1000 * 60 * 60 * 12 // 12h
+  };
+
+  const token = makeToken(payload);
+
+  res.cookie("sid", token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: isProd,
+    maxAge: 1000 * 60 * 60 * 12
   });
 
-  const isProd = process.env.NODE_ENV === "production";
-  res.cookie("sid", sid, { httpOnly: true, sameSite: "lax", secure: isProd, maxAge: 1000 * 60 * 60 * 12 });
   res.json({ ok: true, role: user.role, name: user.displayName, username: user.username });
 });
 
 app.post("/api/logout", auth, (req, res) => {
-  const sid = req.cookies.sid;
-  sessions.delete(sid);
   res.clearCookie("sid");
   res.json({ ok: true });
 });
@@ -148,13 +213,11 @@ app.post("/api/sales", auth, (req, res) => {
   const id = crypto.randomUUID();
   const ts = new Date().toISOString();
 
-  const consultorName = req.user.role === "admin"
-    ? String(req.body?.consultorName || req.user.name)
-    : req.user.name;
+  const consultorName =
+    req.user.role === "admin" ? String(req.body?.consultorName || req.user.name) : req.user.name;
 
-  const userId = req.user.role === "admin"
-    ? (String(req.body?.userId || req.user.userId))
-    : req.user.userId;
+  const userId =
+    req.user.role === "admin" ? String(req.body?.userId || req.user.userId) : req.user.userId;
 
   const sale = {
     id,
@@ -179,17 +242,16 @@ app.put("/api/sales/:id", auth, (req, res) => {
 
   const result = updateSale(id, (current) => {
     if (req.user.role !== "admin" && current.userId !== req.user.userId) {
-      // mantém como estava (sem alterar)
       return current;
     }
 
-    const consultorName = req.user.role === "admin"
-      ? (String(req.body?.consultorName || current.consultorName))
-      : req.user.name;
+    const consultorName =
+      req.user.role === "admin"
+        ? String(req.body?.consultorName || current.consultorName)
+        : req.user.name;
 
-    const userId = req.user.role === "admin"
-      ? (String(req.body?.userId || current.userId))
-      : req.user.userId;
+    const userId =
+      req.user.role === "admin" ? String(req.body?.userId || current.userId) : req.user.userId;
 
     return {
       ...current,
@@ -202,7 +264,6 @@ app.put("/api/sales/:id", auth, (req, res) => {
 
   if (!result.ok) return res.status(404).json({ error: "Venda não encontrada" });
 
-  // Se consultor tentou editar venda de outro, bloqueia de verdade:
   const updated = result.updated;
   if (req.user.role !== "admin" && updated.userId !== req.user.userId) {
     return res.status(403).json({ error: "Você não pode editar venda de outro consultor" });
@@ -214,28 +275,10 @@ app.put("/api/sales/:id", auth, (req, res) => {
 app.delete("/api/sales/:id", auth, (req, res) => {
   const id = req.params.id;
 
-  // checagem antes
-  const { rows } = listSalesForUser({ role: "admin", userId: req.user.userId });
-  const all = rows; // (não usado) — simples, vamos checar via update-delete segura:
-
-  // apagar com permissão
-  const canDelete = updateSale(id, (current) => {
-    if (req.user.role === "admin") return current;
-    if (current.userId !== req.user.userId) return current;
-    return current;
-  });
-
-  // Se não existe:
-  if (!canDelete.ok) return res.status(404).json({ error: "Venda não encontrada" });
-
-  // Buscar novamente pra validar dono
-  // (como estamos em JSON simples, faremos validação por uma segunda via: tentar deletar e depois verificar)
-  // Aqui a validação real: se não é admin, precisamos confirmar o dono:
-  const me = req.user;
-
   // carrega lista do usuário e checa se ele tem essa venda
+  const me = req.user;
   const mine = listSalesForUser({ role: me.role, userId: me.userId });
-  const isMine = mine.some(s => s.id === id);
+  const isMine = mine.some((s) => s.id === id);
 
   if (me.role !== "admin" && !isMine) {
     return res.status(403).json({ error: "Você não pode excluir venda de outro consultor" });
