@@ -1,6 +1,12 @@
 const THEME_KEY = "dash_theme_v1";
 const LIMIT = 1500000;
 
+let ME = null;
+let ALL_ROWS = [];
+let USERS = [];
+let chart = null;
+let currentEdit = null; // sale row being edited
+
 function money(n){
   return new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(Number(n)||0);
 }
@@ -14,118 +20,198 @@ function parseNumber(s){
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
-function clampCredito(raw){ return Math.min(Math.max(raw,0), LIMIT); }
-
-function setTheme(t){
-  document.body.setAttribute("data-theme", t);
-  localStorage.setItem(THEME_KEY, t);
-  const btn = document.getElementById("btnTheme");
-  if(btn) btn.textContent = (t==="dark") ? "☀️" : "🌙";
+function clampCredito(v){
+  const n = Number(v)||0;
+  return Math.min(LIMIT, Math.max(0, n));
 }
-(function initTheme(){
-  const saved = localStorage.getItem(THEME_KEY);
-  if(saved) return setTheme(saved);
-  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  setTheme(prefersDark ? "dark" : "light");
-})();
-document.getElementById("btnTheme").addEventListener("click", ()=>{
-  const cur = document.body.getAttribute("data-theme");
-  setTheme(cur==="dark" ? "light" : "dark");
-});
+function debounce(fn, wait=250){
+  let t=null;
+  return (...args)=>{
+    clearTimeout(t);
+    t=setTimeout(()=>fn(...args), wait);
+  };
+}
 
-let ME = null;
-let LAST_ROWS = [];
-
-async function api(path, opts){
-  const res = await fetch(path, opts);
-  const data = await res.json().catch(()=>({}));
-  if(!res.ok){
-    throw new Error(data?.error || "Erro");
-  }
+async function api(path, opts={}){
+  const res = await fetch(path, {
+    credentials:"include",
+    headers: { "Content-Type":"application/json" , ...(opts.headers||{}) },
+    ...opts
+  });
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok) throw new Error(data.error || "Erro");
   return data;
 }
 
-async function loadMe(){
-  const me = await api("/api/me");
-  ME = me;
-  document.getElementById("meLine").textContent = `Logado como: ${me.name} • Perfil: ${me.role}`;
-  document.getElementById("adminExtras").style.display = (me.role === "admin") ? "block" : "none";
+/* ============ THEME ============ */
+function setTheme(mode){
+  document.body.dataset.theme = mode;
+  localStorage.setItem(THEME_KEY, mode);
+  document.getElementById("btnTheme").textContent = (mode==="dark") ? "☀️" : "🌙";
+}
+function initTheme(){
+  const saved = localStorage.getItem(THEME_KEY) || "light";
+  setTheme(saved);
+  document.getElementById("btnTheme").addEventListener("click", ()=>{
+    setTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
+  });
 }
 
+/* ============ COMPUTATIONS ============ */
 function baseLabel(b){ return b==="venda" ? "Venda" : "Crédito"; }
 
 function badgeSeguro(v){
-  if(v==="Sim") return `<span class="badge" style="background: rgba(37,99,235,.12);"><span class="dot" style="background: var(--accent)"></span>Sim</span>`;
-  return `<span class="badge" style="background: rgba(148,163,184,.10);"><span class="dot" style="background: var(--muted)"></span>Não</span>`;
+  if(v==="Sim") return `<span class="badge" style="background: rgba(37,99,235,.18); border:1px solid rgba(37,99,235,.35);"><span class="dot" style="background: var(--accent)"></span>Sim</span>`;
+  return `<span class="badge" style="background: rgba(148,163,184,.12); border:1px solid rgba(148,163,184,.25);"><span class="dot" style="background: var(--muted)"></span>Não</span>`;
 }
 
 function saleComputed(r){
   const credito = clampCredito((r.cotas||0) * (r.valorUnit||0));
   const base = (r.baseComissao==="venda") ? (r.valorVenda||0) : credito;
-  const comissaoTotal = base * ((r.taxaPct||0)/100);
+  const taxaPct = (r.taxaPct||0);
+  const comissaoTotal = base * (taxaPct/100);
   const parcelaValor = comissaoTotal / 6;
 
-  const parcelas = Array.isArray(r.parcelas) ? r.parcelas : Array(6).fill("Pendente");
-  const pagoN = parcelas.filter(x=>x==="Pago").length;
-  const atrasadoN = parcelas.filter(x=>x==="Atrasado").length;
-  const pendenteN = parcelas.filter(x=>x==="Pendente").length;
-
-  return { credito, base, comissaoTotal, parcelaValor, pagoN, atrasadoN, pendenteN };
+  const parcelas = Array.isArray(r.parcelas) ? r.parcelas : [];
+  let pagoN=0, pendenteN=0, atrasadoN=0;
+  for(const p of parcelas){
+    if(p==="Pago") pagoN++;
+    else if(p==="Atrasado") atrasadoN++;
+    else pendenteN++;
+  }
+  return { credito, base, comissaoTotal, parcelaValor, pagoN, pendenteN, atrasadoN };
 }
 
-function renderKPIs(rows){
-  const totalVendas = rows.length;
+function rowMatchesStatus(r, status){
+  if(status==="todos") return true;
+  const parcelas = Array.isArray(r.parcelas) ? r.parcelas : [];
+  return parcelas.some(p => p===status);
+}
 
+function monthKey(dateStr){
+  // expects YYYY-MM-DD
+  if(!dateStr || typeof dateStr !== "string" || dateStr.length < 7) return "—";
+  return dateStr.slice(0,7);
+}
+
+/* ============ LOADERS ============ */
+async function loadMe(){
+  const me = await api("/api/me");
+  ME = me;
+  document.getElementById("meLine").textContent = `Logado como: ${me.name} • Perfil: ${me.role}`;
+  document.getElementById("adminExtras").style.display = (me.role === "admin") ? "block" : "none";
+
+  // ranking only for admin
+  document.getElementById("rankingSection").style.display = (me.role === "admin") ? "block" : "none";
+
+  // consultor filter only for admin
+  document.getElementById("fConsultorWrap").style.display = (me.role === "admin") ? "block" : "none";
+  document.getElementById("editAdminBlock").style.display = (me.role === "admin") ? "block" : "none";
+}
+
+async function loadUsersIfAdmin(){
+  if(!ME || ME.role !== "admin") return;
+  const data = await api("/api/users");
+  USERS = data.users || [];
+  const sel = document.getElementById("fConsultor");
+  sel.innerHTML = `<option value="todos" selected>Todos</option>` + USERS
+    .map(u => `<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`)
+    .join("");
+}
+
+async function loadSales(){
+  const data = await api("/api/sales");
+  ALL_ROWS = data.rows || [];
+  applyAndRender();
+}
+
+/* ============ FILTERS ============ */
+function readFilters(){
+  const from = document.getElementById("fDateFrom").value || "";
+  const to = document.getElementById("fDateTo").value || "";
+  const status = document.getElementById("fStatus").value;
+  const search = (document.getElementById("fSearch").value || "").trim().toLowerCase();
+  const consultor = (ME && ME.role==="admin") ? document.getElementById("fConsultor").value : "todos";
+  return { from, to, status, search, consultor };
+}
+
+function applyFilters(rows){
+  const { from, to, status, search, consultor } = readFilters();
+
+  return rows.filter(r=>{
+    // date
+    if(from && r.data < from) return false;
+    if(to && r.data > to) return false;
+
+    // status
+    if(!rowMatchesStatus(r, status)) return false;
+
+    // consultor
+    if(consultor !== "todos"){
+      if((r.consultorName||"") !== consultor) return false;
+    }
+
+    // search
+    if(search){
+      const hay = `${r.cliente||""} ${r.produto||""}`.toLowerCase();
+      if(!hay.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+function clearFilters(){
+  document.getElementById("fDateFrom").value = "";
+  document.getElementById("fDateTo").value = "";
+  document.getElementById("fStatus").value = "todos";
+  document.getElementById("fSearch").value = "";
+  if(ME && ME.role==="admin") document.getElementById("fConsultor").value = "todos";
+  applyAndRender();
+}
+
+/* ============ RENDER ============ */
+function renderKpis(rows){
   let total = 0;
   let pago = 0;
-  let atrasado = 0;
   let pendente = 0;
-
-  let parcelasTotal = 0;
-  let parcelasPago = 0;
-  let parcelasAtrasado = 0;
-  let parcelasPendente = 0;
+  let atrasado = 0;
 
   for(const r of rows){
     const c = saleComputed(r);
     total += c.comissaoTotal;
-
-    parcelasTotal += 6;
-    parcelasPago += c.pagoN;
-    parcelasAtrasado += c.atrasadoN;
-    parcelasPendente += c.pendenteN;
-
     pago += c.parcelaValor * c.pagoN;
-    atrasado += c.parcelaValor * c.atrasadoN;
     pendente += c.parcelaValor * c.pendenteN;
+    atrasado += c.parcelaValor * c.atrasadoN;
   }
 
   document.getElementById("kpiTotal").textContent = money(total);
-  document.getElementById("kpiVendas").textContent = `${totalVendas} venda(s) • ${parcelasTotal} parcela(s) no total`;
+  document.getElementById("kpiVendas").textContent = `${rows.length} venda(s) no filtro`;
 
   document.getElementById("kpiPago").textContent = money(pago);
-  const pagoPct = total > 0 ? (pago / total) * 100 : 0;
-  document.getElementById("kpiPagoPct").textContent = `${pct(pagoPct).replace("%","")}% do total • ${parcelasPago}/${parcelasTotal} parcelas pagas`;
+  document.getElementById("kpiPagoPct").textContent = total>0 ? `${pct((pago/total)*100)} do total` : "—";
 
   document.getElementById("kpiPendente").textContent = money(pendente);
-  document.getElementById("kpiPendenteInfo").textContent = `${parcelasPendente}/${parcelasTotal} parcelas pendentes`;
+  document.getElementById("kpiPendenteInfo").textContent = total>0 ? `${pct((pendente/total)*100)} do total` : "—";
 
   document.getElementById("kpiAtrasado").textContent = money(atrasado);
-  document.getElementById("kpiAtrasadoInfo").textContent = `${parcelasAtrasado}/${parcelasTotal} parcelas atrasadas`;
+  document.getElementById("kpiAtrasadoInfo").textContent = total>0 ? `${pct((atrasado/total)*100)} do total` : "—";
 
-  // Resumo rápido
-  const ticket = totalVendas > 0 ? total / totalVendas : 0;
+  // quick summary
+  const ticket = rows.length ? (total/rows.length) : 0;
   document.getElementById("quickTicket").textContent = money(ticket);
-  document.getElementById("quickParcelas").textContent = `${parcelasTotal} (P: ${parcelasPago} • Pen: ${parcelasPendente} • Atr: ${parcelasAtrasado})`;
-  document.getElementById("quickMix").textContent =
-    `Pago: ${money(pago)} • Pendente: ${money(pendente)} • Atrasado: ${money(atrasado)} • Comissão total: ${money(total)}`;
 
-  return { total, pago, atrasado, pendente };
+  // top consultor
+  const agg = aggregateByConsultor(rows);
+  const top = agg.sort((a,b)=> (b.pago - a.pago) || (b.total - a.total))[0];
+  document.getElementById("quickTop").textContent = top ? `${top.consultor}` : "—";
+  document.getElementById("quickTopSub").textContent = top ? `${money(top.pago)} pago • ${top.vendas} venda(s)` : "—";
+
+  const crit = agg.reduce((acc,x)=> acc + (x.atrasado>0 ? 1 : 0), 0);
+  document.getElementById("quickCriticos").textContent = String(crit);
 }
 
-function renderRanking(rows){
+function aggregateByConsultor(rows){
   const by = new Map();
-
   for(const r of rows){
     const key = r.consultorName || "—";
     if(!by.has(key)){
@@ -140,157 +226,428 @@ function renderRanking(rows){
     agg.pendente += c.parcelaValor * c.pendenteN;
     agg.atrasado += c.parcelaValor * c.atrasadoN;
   }
-
-  const arr = Array.from(by.values())
-    .sort((a,b)=> (b.pago - a.pago) || (b.total - a.total) || (b.vendas - a.vendas));
-
-  const rankBody = document.getElementById("rankBody");
-  rankBody.innerHTML = arr.map((x,i)=>`
-    <tr>
-      <td><b>${i+1}</b></td>
-      <td><b>${x.consultor}</b></td>
-      <td>${x.vendas}</td>
-      <td><b>${money(x.total)}</b></td>
-      <td><b style="color:var(--good)">${money(x.pago)}</b></td>
-      <td><b style="color:var(--warn)">${money(x.pendente)}</b></td>
-      <td><b style="color:var(--bad)">${money(x.atrasado)}</b></td>
-    </tr>
-  `).join("") || `<tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">Sem dados para ranking.</td></tr>`;
-
-  const top = arr[0];
-  if(top){
-    document.getElementById("quickTop").textContent = `${top.consultor}`;
-    document.getElementById("quickTopSub").textContent = `Pago: ${money(top.pago)} • Total: ${money(top.total)} • Vendas: ${top.vendas}`;
-  } else {
-    document.getElementById("quickTop").textContent = "—";
-    document.getElementById("quickTopSub").textContent = "—";
-  }
+  return Array.from(by.values());
 }
 
-async function loadSales(){
-  const { rows } = await api("/api/sales");
-  LAST_ROWS = rows;
+function renderRanking(rows){
+  if(!ME || ME.role !== "admin") return;
 
-  const tbody = document.getElementById("tbody");
-  tbody.innerHTML = rows.map(r=>{
-    const c = saleComputed(r);
+  const list = aggregateByConsultor(rows);
+  list.sort((a,b)=> (b.pago - a.pago) || (b.total - a.total));
+
+  const tbody = document.getElementById("rankBody");
+  const max = list[0]?.pago || 1;
+
+  tbody.innerHTML = list.map((r, idx)=>{
+    const medal = idx===0 ? "🥇" : idx===1 ? "🥈" : idx===2 ? "🥉" : String(idx+1);
+    const barW = Math.max(4, Math.round((r.pago/max)*100));
     return `
       <tr>
-        <td><b>${r.consultorName || "—"}</b></td>
-        <td>${r.cliente}</td>
-        <td>${r.produto}</td>
-        <td>${r.data}</td>
-        <td>${badgeSeguro(r.seguro)}</td>
-        <td><b>${r.cotas}</b></td>
-        <td><b>${money(r.valorUnit)}</b></td>
-        <td><b>${money(c.credito)}</b></td>
-        <td>${baseLabel(r.baseComissao)}</td>
-        <td>${pct(r.taxaPct)}</td>
-        <td><b>${money(c.comissaoTotal)}</b></td>
-        <td style="text-align:right;">
-          <button class="btn" onclick="delSale('${r.id}')">🗑 Excluir</button>
+        <td style="font-weight:900;">${medal}</td>
+        <td>
+          <div style="font-weight:900;">${escapeHtml(r.consultor)}</div>
+          <div class="muted text-xs">
+            <div class="bar mt-1" style="height:8px; background: rgba(148,163,184,.16); border-radius:999px; overflow:hidden;">
+              <div style="height:100%; width:${barW}%; background: rgba(37,99,235,.65);"></div>
+            </div>
+          </div>
         </td>
-      </tr>
-    `;
-  }).join("") || `<tr><td colspan="12" class="muted" style="text-align:center;padding:16px;">Sem vendas ainda.</td></tr>`;
-
-  renderKPIs(rows);
-  renderRanking(rows);
+        <td>${r.vendas}</td>
+        <td>${money(r.total)}</td>
+        <td style="color:var(--good); font-weight:900;">${money(r.pago)}</td>
+      </tr>`;
+  }).join("");
 }
 
-window.delSale = async (id) => {
+function renderChart(rows){
+  const canvas = document.getElementById("chartComissoes");
+  if(!canvas || !window.Chart) return;
+
+  const byMonth = new Map();
+  for(const r of rows){
+    const key = monthKey(r.data);
+    if(!byMonth.has(key)){
+      byMonth.set(key, { month:key, pago:0, pendente:0, atrasado:0 });
+    }
+    const c = saleComputed(r);
+    const agg = byMonth.get(key);
+    agg.pago += c.parcelaValor * c.pagoN;
+    agg.pendente += c.parcelaValor * c.pendenteN;
+    agg.atrasado += c.parcelaValor * c.atrasadoN;
+  }
+
+  const months = Array.from(byMonth.values()).sort((a,b)=> a.month.localeCompare(b.month));
+  const labels = months.map(m=>m.month);
+  const dsPago = months.map(m=>Math.round(m.pago*100)/100);
+  const dsPend = months.map(m=>Math.round(m.pendente*100)/100);
+  const dsAtra = months.map(m=>Math.round(m.atrasado*100)/100);
+
+  if(chart) chart.destroy();
+
+  chart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label:"Pago", data: dsPago, stack:"s" },
+        { label:"Pendente", data: dsPend, stack:"s" },
+        { label:"Atrasado", data: dsAtra, stack:"s" }
+      ]
+    },
+    options: {
+      responsive: true,
+      animation: { duration: 600 },
+      interaction: { mode:"index", intersect:false },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: (ctx)=> `${ctx.dataset.label}: ${money(ctx.parsed.y)}`
+          }
+        },
+        legend: { position: "bottom" }
+      },
+      scales: {
+        x: { stacked:true },
+        y: {
+          stacked:true,
+          ticks: {
+            callback: (v)=> money(v)
+          }
+        }
+      },
+      onClick: (_evt, elements)=>{
+        if(!elements || !elements.length) return;
+        const idx = elements[0].index;
+        const month = labels[idx]; // YYYY-MM
+        // apply date filter to this month
+        const from = `${month}-01`;
+        const to = `${month}-31`;
+        document.getElementById("fDateFrom").value = from;
+        document.getElementById("fDateTo").value = to;
+        applyAndRender();
+      }
+    }
+  });
+}
+
+function renderTable(rows){
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = rows
+    .sort((a,b)=> (b.data||"").localeCompare(a.data||""))
+    .map(r=>{
+      const c = saleComputed(r);
+      const parcelas = (Array.isArray(r.parcelas)? r.parcelas : Array.from({length:6},()=> "Pendente"));
+      const statusResumo = `${parcelas.filter(p=>p==="Pago").length}P / ${parcelas.filter(p=>p==="Pendente").length}Pe / ${parcelas.filter(p=>p==="Atrasado").length}A`;
+      return `
+      <tr>
+        <td>${escapeHtml(r.consultorName || "—")}</td>
+        <td>${escapeHtml(r.cliente||"")}</td>
+        <td>${escapeHtml(r.produto||"")}</td>
+        <td>${escapeHtml(r.data||"")}</td>
+        <td>${badgeSeguro(r.seguro)}</td>
+        <td>${Number(r.cotas||0)}</td>
+        <td>${money(r.valorUnit||0)}</td>
+        <td>${money(c.credito)}</td>
+        <td>${baseLabel(r.baseComissao)}</td>
+        <td>${pct(r.taxaPct||0)}</td>
+        <td style="font-weight:900;">${money(c.comissaoTotal)} <span class="muted text-xs">(${statusResumo})</span></td>
+        <td style="text-align:right; white-space:nowrap;">
+          <button class="btn btn-sm" data-action="detail" data-id="${r.id}">Detalhar</button>
+          <button class="btn btn-sm" data-action="delete" data-id="${r.id}" style="border-color: rgba(239,68,68,.35); color: var(--bad);">Excluir</button>
+        </td>
+      </tr>`;
+    }).join("");
+
+  tbody.querySelectorAll("button[data-action='delete']").forEach(btn=>{
+    btn.addEventListener("click", ()=> onDeleteSale(btn.dataset.id));
+  });
+  tbody.querySelectorAll("button[data-action='detail']").forEach(btn=>{
+    btn.addEventListener("click", ()=> openModal(btn.dataset.id));
+  });
+}
+
+function escapeHtml(s){
+  return String(s||"").replace(/[&<>"']/g, m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
+function applyAndRender(){
+  const rows = applyFilters(ALL_ROWS);
+
+  renderKpis(rows);
+  renderRanking(rows);
+  renderChart(rows);
+  renderTable(rows);
+}
+
+/* ============ EXPORT ============ */
+function rowsForExport(rows){
+  return rows.map(r=>{
+    const c = saleComputed(r);
+    const parcelas = (Array.isArray(r.parcelas) ? r.parcelas : []);
+    const counts = {
+      pago: parcelas.filter(p=>p==="Pago").length,
+      pendente: parcelas.filter(p=>p==="Pendente").length,
+      atrasado: parcelas.filter(p=>p==="Atrasado").length
+    };
+    return {
+      Consultor: r.consultorName || "",
+      Cliente: r.cliente || "",
+      Produto: r.produto || "",
+      Data: r.data || "",
+      Seguro: r.seguro || "",
+      Cotas: r.cotas || 0,
+      "Valor Unitário": r.valorUnit || 0,
+      "Crédito": c.credito,
+      "Base Comissão": baseLabel(r.baseComissao),
+      "% Comissão": r.taxaPct || 0,
+      "Comissão Total": c.comissaoTotal,
+      "Parcelas Pagas": counts.pago,
+      "Parcelas Pendentes": counts.pendente,
+      "Parcelas Atrasadas": counts.atrasado
+    };
+  });
+}
+
+function exportCsv(){
+  const rows = applyFilters(ALL_ROWS);
+  const data = rowsForExport(rows);
+  const cols = Object.keys(data[0]||{});
+  const lines = [
+    cols.join(";"),
+    ...data.map(obj=> cols.map(k=> String(obj[k] ?? "").replace(/"/g,'""')).join(";"))
+  ];
+  const blob = new Blob([ "\ufeff" + lines.join("\n") ], { type:"text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `vendas_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportXlsx(){
+  const rows = applyFilters(ALL_ROWS);
+  const data = rowsForExport(rows);
+
+  if(!window.XLSX){
+    // fallback
+    exportCsv();
+    return;
+  }
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Vendas");
+  XLSX.writeFile(wb, `vendas_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+/* ============ CRUD ============ */
+async function onDeleteSale(id){
   if(!confirm("Excluir esta venda?")) return;
   try{
     await api(`/api/sales/${id}`, { method:"DELETE" });
     await loadSales();
   }catch(e){
-    alert(e.message);
+    alert(e.message || "Erro ao excluir");
   }
-};
-
-function updatePreview(){
-  const f = document.getElementById("formAdd");
-  const fd = new FormData(f);
-
-  const cotas = Math.max(0, Math.floor(parseNumber(fd.get("cotas"))));
-  const unit = Math.max(0, parseNumber(fd.get("valorUnit")));
-  const taxa = parseNumber(fd.get("taxaPct"));
-  const base = fd.get("baseComissao");
-
-  const creditoRaw = cotas * unit;
-  const credito = clampCredito(creditoRaw);
-  const valorVenda = Math.max(0, parseNumber(fd.get("valorVenda")));
-
-  const baseVal = (base==="venda") ? valorVenda : credito;
-  const comissao = baseVal * (taxa/100);
-
-  document.getElementById("pvCredito").textContent = creditoRaw ? money(creditoRaw) : "—";
-
-  if(creditoRaw > LIMIT){
-    document.getElementById("pvCreditoFinal").style.display = "block";
-    document.getElementById("pvCreditoFinal").textContent = `Crédito final (limitado): ${money(LIMIT)}`;
-    document.getElementById("pvWarn").style.display = "block";
-    document.getElementById("pvWarn").textContent = `⚠️ Crédito bruto ${money(creditoRaw)} passou do limite. Foi ajustado para ${money(LIMIT)}.`;
-  } else {
-    document.getElementById("pvCreditoFinal").style.display = "none";
-    document.getElementById("pvWarn").style.display = "none";
-  }
-
-  document.getElementById("pvComissao").textContent = comissao ? money(comissao) : "—";
-  document.getElementById("pvParcela").textContent = comissao ? money(comissao/6) : "—";
 }
 
-document.getElementById("formAdd").addEventListener("input", updatePreview);
-document.getElementById("formAdd").addEventListener("change", updatePreview);
+async function onAddSale(ev){
+  ev.preventDefault();
+  const form = ev.currentTarget;
+  const fd = new FormData(form);
 
-document.getElementById("formAdd").addEventListener("submit", async (e)=>{
-  e.preventDefault();
-  const addErr = document.getElementById("addErr");
-  addErr.style.display = "none";
+  const body = {};
+  for(const [k,v] of fd.entries()){
+    body[k] = v;
+  }
 
-  const fd = new FormData(e.target);
+  // normalize numbers
+  body.cotas = parseNumber(body.cotas);
+  body.valorUnit = parseNumber(body.valorUnit);
+  body.valorVenda = parseNumber(body.valorVenda);
+  body.taxaPct = parseNumber(body.taxaPct);
 
-  const payload = {
-    cliente: fd.get("cliente"),
-    produto: fd.get("produto"),
-    data: fd.get("data"),
-    seguro: fd.get("seguro"),
-    cotas: fd.get("cotas"),
-    valorUnit: fd.get("valorUnit"),
-    valorVenda: fd.get("valorVenda"),
-    baseComissao: fd.get("baseComissao"),
-    taxaPct: fd.get("taxaPct")
+  try{
+    document.getElementById("addErr").style.display = "none";
+    await api("/api/sales", { method:"POST", body: JSON.stringify(body) });
+    form.reset();
+    updatePreview();
+    await loadSales();
+  }catch(e){
+    const el = document.getElementById("addErr");
+    el.textContent = e.message || "Erro ao salvar";
+    el.style.display = "block";
+  }
+}
+
+function updatePreview(){
+  const form = document.getElementById("formAdd");
+  if(!form) return;
+  const fd = new FormData(form);
+  const cotas = parseNumber(fd.get("cotas"));
+  const valorUnit = parseNumber(fd.get("valorUnit"));
+  const valorVenda = parseNumber(fd.get("valorVenda"));
+  const taxaPct = parseNumber(fd.get("taxaPct"));
+  const baseComissao = fd.get("baseComissao");
+
+  const creditoRaw = cotas*valorUnit;
+  const credito = clampCredito(creditoRaw);
+  const base = (baseComissao==="venda") ? valorVenda : credito;
+  const comissao = base * (taxaPct/100);
+  const parcela = comissao/6;
+
+  document.getElementById("pvCredito").textContent = money(credito);
+  document.getElementById("pvComissao").textContent = money(comissao);
+  document.getElementById("pvParcela").textContent = money(parcela);
+
+  const warn = document.getElementById("pvWarn");
+  const creditoFinal = document.getElementById("pvCreditoFinal");
+  if(creditoRaw > LIMIT){
+    warn.textContent = `Crédito excedeu o limite. Foi ajustado para ${money(LIMIT)}.`;
+    warn.style.display = "block";
+    creditoFinal.style.display = "block";
+    creditoFinal.textContent = `Crédito bruto: ${money(creditoRaw)} • Ajustado: ${money(credito)}`;
+  }else{
+    warn.style.display = "none";
+    creditoFinal.style.display = "none";
+  }
+}
+
+/* ============ MODAL EDIT ============ */
+function openModal(id){
+  const r = ALL_ROWS.find(x=>x.id===id);
+  if(!r) return;
+  currentEdit = JSON.parse(JSON.stringify(r)); // clone
+
+  const modal = document.getElementById("saleModal");
+  modal.style.display = "block";
+  document.getElementById("modalSub").textContent = `ID: ${id} • Atualizado: ${r.updatedAt ? r.updatedAt.slice(0,19).replace("T"," ") : "—"}`;
+
+  const form = document.getElementById("formEdit");
+  form.cliente.value = r.cliente || "";
+  form.produto.value = r.produto || "";
+  form.data.value = r.data || "";
+  form.seguro.value = r.seguro || "Não";
+  form.baseComissao.value = r.baseComissao || "credito";
+  form.cotas.value = String(r.cotas||0);
+  form.valorUnit.value = String(r.valorUnit||0);
+  form.valorVenda.value = String(r.valorVenda||0);
+  form.taxaPct.value = String(r.taxaPct||0);
+
+  if(ME && ME.role==="admin"){
+    form.consultorName.value = r.consultorName || "";
+    form.userId.value = r.userId || "";
+  }
+
+  renderParcelasEditor(r.parcelas || Array.from({length:6},()=> "Pendente"));
+}
+
+function closeModal(){
+  document.getElementById("saleModal").style.display = "none";
+  currentEdit = null;
+}
+
+function renderParcelasEditor(parcelas){
+  const wrap = document.getElementById("parcelasEdit");
+  const arr = (Array.isArray(parcelas) && parcelas.length===6) ? parcelas.slice() : Array.from({length:6},()=> "Pendente");
+  currentEdit.parcelas = arr;
+
+  wrap.innerHTML = arr.map((p, idx)=>{
+    const cls = p==="Pago" ? "var(--good)" : p==="Atrasado" ? "var(--bad)" : "var(--warn)";
+    return `<button type="button" class="btn btn-sm" data-i="${idx}" style="justify-content:center; border-color: rgba(148,163,184,.25);">
+      <span class="dot" style="background:${cls};"></span>${idx+1}º<br><span class="muted text-xs">${p}</span>
+    </button>`;
+  }).join("");
+
+  wrap.querySelectorAll("button[data-i]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const i = Number(btn.dataset.i);
+      const cur = currentEdit.parcelas[i];
+      const next = (cur==="Pendente") ? "Pago" : (cur==="Pago") ? "Atrasado" : "Pendente";
+      currentEdit.parcelas[i] = next;
+      renderParcelasEditor(currentEdit.parcelas);
+    });
+  });
+}
+
+async function saveEdit(ev){
+  ev.preventDefault();
+  if(!currentEdit) return;
+  const form = document.getElementById("formEdit");
+  const body = {
+    cliente: form.cliente.value,
+    produto: form.produto.value,
+    data: form.data.value,
+    seguro: form.seguro.value,
+    baseComissao: form.baseComissao.value,
+    cotas: parseNumber(form.cotas.value),
+    valorUnit: parseNumber(form.valorUnit.value),
+    valorVenda: parseNumber(form.valorVenda.value),
+    taxaPct: parseNumber(form.taxaPct.value),
+    parcelas: currentEdit.parcelas
   };
 
-  if(ME?.role === "admin"){
-    payload.consultorName = fd.get("consultorName");
-    payload.userId = fd.get("userId");
+  if(ME && ME.role==="admin"){
+    body.consultorName = form.consultorName.value;
+    body.userId = form.userId.value;
   }
 
   try{
-    await api("/api/sales", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
-    });
-    e.target.reset();
-    updatePreview();
+    document.getElementById("editErr").style.display="none";
+    await api(`/api/sales/${currentEdit.id}`, { method:"PUT", body: JSON.stringify(body) });
+    closeModal();
     await loadSales();
-  }catch(err){
-    addErr.textContent = err.message;
-    addErr.style.display = "block";
+  }catch(e){
+    const el = document.getElementById("editErr");
+    el.textContent = e.message || "Erro ao salvar";
+    el.style.display = "block";
   }
-});
+}
 
+async function deleteFromModal(){
+  if(!currentEdit) return;
+  await onDeleteSale(currentEdit.id);
+  closeModal();
+}
+
+/* ============ INIT ============ */
 document.getElementById("btnRefresh").addEventListener("click", loadSales);
 document.getElementById("btnLogout").addEventListener("click", async ()=>{
-  try{ await api("/api/logout", { method:"POST" }); } catch(e){}
+  try{ await api("/api/logout", { method:"POST" }); }catch(e){}
   window.location.href = "/";
 });
 
+document.getElementById("formAdd").addEventListener("submit", onAddSale);
+["input","change"].forEach(evt=>{
+  document.getElementById("formAdd").addEventListener(evt, debounce(updatePreview, 120), true);
+});
+
+document.getElementById("btnClearFilters").addEventListener("click", clearFilters);
+document.getElementById("btnExportCsv").addEventListener("click", exportCsv);
+document.getElementById("btnExportXlsx").addEventListener("click", exportXlsx);
+
+["fDateFrom","fDateTo","fStatus","fSearch","fConsultor"].forEach(id=>{
+  const el = document.getElementById(id);
+  if(!el) return;
+  const handler = debounce(applyAndRender, 180);
+  el.addEventListener("input", handler);
+  el.addEventListener("change", handler);
+});
+
+document.getElementById("btnCloseModal").addEventListener("click", closeModal);
+document.getElementById("saleModal").addEventListener("click", (e)=>{
+  if(e.target && e.target.id==="saleModal") closeModal();
+});
+document.getElementById("formEdit").addEventListener("submit", saveEdit);
+document.getElementById("btnDeleteSale").addEventListener("click", deleteFromModal);
+
 (async function init(){
+  initTheme();
   try{
     await loadMe();
+    await loadUsersIfAdmin();
     await loadSales();
     updatePreview();
   }catch(e){
