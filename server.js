@@ -15,7 +15,7 @@ import {
 } from "./db.js";
 
 const app = express();
-app.set("trust proxy", 1); // Render usa proxy
+app.set("trust proxy", 1);
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "1mb" }));
@@ -24,18 +24,69 @@ app.use(express.static("public"));
 
 seedUsersIfNeeded({ adminPassword: process.env.ADMIN_PASSWORD });
 
-/* ===== Sessão simples (igual seu primeiro código) ===== */
-const sessions = new Map(); // sid -> { userId, role, name, username }
+/* =========================
+   TOKEN ASSINADO NO COOKIE
+   (stateless, não depende de Map)
+========================= */
+const SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET) {
+  console.warn("⚠️ Defina SESSION_SECRET no Render (Environment).");
+}
 
-function makeSid() {
-  return crypto.randomBytes(24).toString("hex");
+function b64urlFromBuffer(buf) {
+  return buf.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+function b64urlEncodeString(str) {
+  return b64urlFromBuffer(Buffer.from(str, "utf8"));
+}
+function b64urlDecodeToString(b64u) {
+  const b64 = b64u.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+  return Buffer.from(b64 + pad, "base64").toString("utf8");
+}
+
+function sign(body) {
+  const key = SESSION_SECRET || "dev_secret_change_me";
+  const sig = crypto.createHmac("sha256", key).update(body).digest();
+  return b64urlFromBuffer(sig);
+}
+
+function makeToken(payload) {
+  const body = b64urlEncodeString(JSON.stringify(payload));
+  const sig = sign(body);
+  return `${body}.${sig}`;
+}
+
+function readToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+
+  const [body, sig] = parts;
+  const expected = sign(body);
+
+  // timing-safe compare
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return null;
+  if (!crypto.timingSafeEqual(a, b)) return null;
+
+  let payload;
+  try {
+    payload = JSON.parse(b64urlDecodeToString(body));
+  } catch {
+    return null;
+  }
+
+  if (payload?.exp && Date.now() > payload.exp) return null;
+  return payload;
 }
 
 function auth(req, res, next) {
-  const sid = req.cookies.sid;
-  const s = sid ? sessions.get(sid) : null;
-  if (!s) return res.status(401).json({ error: "Não autenticado" });
-  req.user = s;
+  const token = req.cookies.sid;
+  const session = readToken(token);
+  if (!session) return res.status(401).json({ error: "Não autenticado" });
+  req.user = session;
   next();
 }
 
@@ -105,16 +156,17 @@ app.post("/api/login", (req, res) => {
     return res.status(401).json({ error: "Usuário ou senha inválidos" });
   }
 
-  const sid = makeSid();
-  sessions.set(sid, {
+  const payload = {
     userId: user.id,
     role: user.role,
     name: user.displayName,
-    username: user.username
-  });
+    username: user.username,
+    exp: Date.now() + 1000 * 60 * 60 * 12 // 12h
+  };
 
-  // Render = HTTPS, então secure true é ok.
-  res.cookie("sid", sid, {
+  const token = makeToken(payload);
+
+  res.cookie("sid", token, {
     httpOnly: true,
     sameSite: "lax",
     secure: true,
@@ -126,8 +178,6 @@ app.post("/api/login", (req, res) => {
 });
 
 app.post("/api/logout", auth, (req, res) => {
-  const sid = req.cookies.sid;
-  sessions.delete(sid);
   res.clearCookie("sid", { path: "/" });
   res.json({ ok: true });
 });
@@ -206,7 +256,6 @@ app.put("/api/sales/:id", auth, (req, res) => {
 app.delete("/api/sales/:id", auth, (req, res) => {
   const id = req.params.id;
 
-  // só deixa consultor apagar se for dele
   if (req.user.role !== "admin") {
     const mine = listSalesForUser({ role: req.user.role, userId: req.user.userId }) || [];
     const isMine = mine.some(s => s.id === id);
